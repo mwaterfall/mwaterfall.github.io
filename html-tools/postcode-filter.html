@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Postcode Filter</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 16px;
+      background: #f5f5f7;
+      color: #222;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 0.5rem;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+    textarea {
+      width: 100%;
+      min-height: 200px;
+      box-sizing: border-box;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9rem;
+      background: white;
+    }
+    label {
+      font-weight: 600;
+      font-size: 0.9rem;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 8px;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+    .controls-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    select, button {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #bbb;
+      font-size: 0.9rem;
+      background: #fff;
+      cursor: pointer;
+    }
+    button.primary {
+      background: #2563eb;
+      color: white;
+      border-color: #1d4ed8;
+    }
+    button.secondary {
+      background: #e5e7eb;
+      border-color: #d1d5db;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 0.85rem;
+      color: #555;
+      margin-top: 4px;
+      margin-bottom: 4px;
+    }
+    .error {
+      color: #b91c1c;
+      background: #fee;
+      padding: 8px;
+      border-radius: 4px;
+      border-left: 4px solid #b91c1c;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.85rem;
+      margin-top: 8px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 4px 6px;
+      text-align: left;
+    }
+    th {
+      background: #f3f4f6;
+    }
+    .output-wrapper {
+      margin-top: 12px;
+      max-height: 400px;
+      overflow: auto;
+    }
+    .privacy-footer {
+      margin-top: 24px;
+      padding: 12px 16px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: #6b7280;
+      line-height: 1.5;
+    }
+    @media (max-width: 900px) {
+      .container {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Postcode Exclusion Filter</h1>
+  <p style="font-size:0.9rem; max-width: 720px;">
+    Paste your CSV or TSV data on the left and your postcode patterns on the right.
+    Then choose the column that contains the shipping postcode and run the filter.
+  </p>
+
+  <div class="container">
+    <div class="card">
+      <label for="dataInput">Source data (CSV or TSV)</label>
+      <textarea id="dataInput" placeholder="Order ID  Email  Shipping Zip Code  Shipping Address
+12345 customer@example.com  PE27 1AA 123 Main St
+12346 buyer@example.com SW1A 0AA  10 Downing St
+12347 user@example.com  W1A 1AA  Broadcasting House
+12348 shop@example.com  M1 1AE Manchester City Centre"></textarea>
+      <div class="status" id="parseStatus"></div>
+    </div>
+
+    <div class="card">
+      <label for="patternsInput">Exclusion postcode patterns</label>
+      <textarea id="patternsInput" placeholder="PE27, PE27 1, PE27 1-3, SW1A, SW1A 0
+PE27
+PE27 1-3, SW1A
+W1"></textarea>
+
+      <div style="font-size:0.8rem; color:#555; margin-top:4px;">
+        Patterns can be one per line or comma separated.  
+        Use prefix only (<code>PE27</code>), prefix + single digit (<code>PE27 1</code>), or prefix + digit range (<code>PE27 1-3</code>). Second part must be 0-9 or 0-9 to 0-9 only.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="controls">
+      <div class="controls-row">
+        <div>
+          <label for="columnSelect" style="margin-bottom:2px;">Postcode column</label>
+          <select id="columnSelect">
+            <option value="">(parse data first)</option>
+          </select>
+        </div>
+      </div>
+      
+      <div class="controls-row">
+        <button id="filterButton" class="primary" type="button">Run filter</button>
+        <button id="copyButton" class="secondary" type="button" disabled>Copy filtered data</button>
+      </div>
+    </div>
+    <div class="status" id="filterStatus"></div>
+    <div class="output-wrapper" id="outputWrapper"></div>
+  </div>
+
+  <script>
+    // Simple global to hold the latest filtered result for export
+    const filterState = {
+      header: null,
+      rows: [],
+      delimiter: ","
+    };
+
+    const dataInput = document.getElementById("dataInput");
+    const patternsInput = document.getElementById("patternsInput");
+    const parseStatus = document.getElementById("parseStatus");
+    const filterStatus = document.getElementById("filterStatus");
+    const columnSelect = document.getElementById("columnSelect");
+    const outputWrapper = document.getElementById("outputWrapper");
+    const filterButton = document.getElementById("filterButton");
+    const copyButton = document.getElementById("copyButton");
+
+    function splitCsvLine(line) {
+      const result = [];
+      let current = "";
+      let inQuotes = false;
+
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+
+        if (ch === '"') {
+          // handle escaped quotes
+          if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === "," && !inQuotes) {
+          result.push(current);
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current);
+      return result;
+    }
+
+    function parseData(raw) {
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      const lines = trimmed.split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length === 0) {
+        return null;
+      }
+
+      const first = lines[0];
+      const hasTab = first.includes("\t");
+      const delimiter = hasTab ? "\t" : ",";
+
+      const rows = lines.map(line => {
+        if (delimiter === "\t") {
+          return line.split("\t");
+        } else {
+          return splitCsvLine(line);
+        }
+      });
+
+      return {
+        header: rows[0],
+        rows: rows.slice(1),
+        delimiter
+      };
+    }
+
+    function normalisePostcode(value) {
+      if (!value) return "";
+      return String(value).toUpperCase().replace(/\s+/g, "");
+    }
+
+    function validatePostcodePattern(pattern) {
+      // Valid formats:
+      // 1-2 letters, 1-2 numbers, optional letter (for SW1A style)
+      // Optionally followed by: whitespace + (single digit OR digit-dash-digit)
+      
+      const trimmed = pattern.trim();
+      if (!trimmed) return { valid: false, reason: "Empty pattern" };
+      
+      // Simplified regex: 1-2 letters, 1-2 numbers, optional letter, then optionally whitespace + (digit OR digit-digit)
+      // Matches: PE27, PE27 1, PE271, PE27 1-3, PE271-3, W1, W1 0, SW1A, SW1A 0, etc.
+      const validPattern = /^[A-Za-z]{1,2}\d{1,2}[A-Za-z]?(?:\s*(?:\d|\d-\d))?$/;
+      
+      if (validPattern.test(trimmed)) {
+        return { valid: true };
+      }
+      
+      return { valid: false, reason: "Invalid format - use 1-2 letters, 1-2 numbers, optional whitespace + digit/range" };
+    }
+
+    function buildPatterns(patternText) {
+      const tokens = patternText
+        .split(/[\r\n,]/)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const patterns = [];
+      const invalidPatterns = [];
+
+      for (const token of tokens) {
+        // Validate the pattern first
+        const validation = validatePostcodePattern(token);
+        if (!validation.valid) {
+          invalidPatterns.push({ pattern: token, reason: validation.reason });
+          continue;
+        }
+        
+        let s = normalisePostcode(token);
+        if (!s) continue;
+
+        const dashIndex = s.indexOf("-");
+        if (
+          dashIndex > 0 &&
+          dashIndex < s.length - 1 &&
+          /\d/.test(s[dashIndex - 1]) &&
+          /\d/.test(s[dashIndex + 1])
+        ) {
+          // range form, for example "PE271-3" (from "PE27 1-3")
+          const startDigitIndex = dashIndex - 1;
+          const prefix = s.slice(0, startDigitIndex);
+          const startDigit = s[startDigitIndex];
+          const endDigit = s[dashIndex + 1];
+
+          let start = parseInt(startDigit, 10);
+          let end = parseInt(endDigit, 10);
+          if (Number.isNaN(start) || Number.isNaN(end)) {
+            // if it looks odd, fall back to simple prefix
+            patterns.push({ type: "prefix", value: s });
+            continue;
+          }
+          if (start > end) {
+            const temp = start;
+            start = end;
+            end = temp;
+          }
+
+          patterns.push({
+            type: "range",
+            prefix,
+            start,
+            end
+          });
+        } else {
+          // plain prefix pattern, for example "PE27" or "PE271"
+          patterns.push({ type: "prefix", value: s });
+        }
+      }
+
+      return { patterns, invalidPatterns };
+    }
+
+    function createMatcher(patterns) {
+      if (!patterns || patterns.length === 0) {
+        return () => false;
+      }
+
+      return function matches(postcodeRaw) {
+        const p = normalisePostcode(postcodeRaw);
+        if (!p) return false;
+
+        for (const pat of patterns) {
+          if (pat.type === "prefix") {
+            if (p.startsWith(pat.value)) {
+              return true;
+            }
+          } else if (pat.type === "range") {
+            if (!p.startsWith(pat.prefix)) {
+              continue;
+            }
+            if (p.length <= pat.prefix.length) {
+              continue;
+            }
+            const nextChar = p[pat.prefix.length];
+            if (!/\d/.test(nextChar)) {
+              continue;
+            }
+            const d = parseInt(nextChar, 10);
+            if (d >= pat.start && d <= pat.end) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+    }
+
+    function showValidationError(invalidPatterns) {
+      let errorMsg = "❌ Invalid exclusion patterns detected:\n\n";
+      invalidPatterns.forEach(item => {
+        errorMsg += `• "${item.pattern}" - ${item.reason}\n`;
+      });
+      errorMsg += "\n✓ Valid formats:\n";
+      errorMsg += "  • Postcode prefix: PE27, SW1A, W1\n";
+      errorMsg += "  • With single digit (0-9): PE27 1, SW1A 0\n";
+      errorMsg += "  • With range (0-9 to 0-9): PE27 1-3, SW1A 1-9";
+      
+      filterStatus.textContent = errorMsg;
+      filterStatus.classList.add("error");
+      filterStatus.style.whiteSpace = "pre-line";
+      filterStatus.style.fontWeight = "600";
+    }
+
+    function findShippingPostcodeColumn(headers) {
+      // Look for a column containing "shipping" AND one of the postcode terms
+      // Order matters: check more specific terms first
+      const postcodeTerms = [
+        "zip code",
+        "zipcode", 
+        "zip",
+        "post code",
+        "postcode"
+      ];
+      
+      for (let idx = 0; idx < headers.length; idx++) {
+        const header = headers[idx] || "";
+        const headerLower = header.toLowerCase().trim();
+        
+        // Check if header contains "shipping"
+        if (headerLower.includes("shipping")) {
+          // Check if it also contains any of the postcode terms
+          for (const term of postcodeTerms) {
+            if (headerLower.includes(term)) {
+              return idx;
+            }
+          }
+        }
+      }
+      
+      return null;
+    }
+
+    function updateColumnSelect(headers) {
+      const currentIndex =
+        columnSelect.options.length > 0 && columnSelect.value !== ""
+          ? parseInt(columnSelect.value, 10)
+          : null;
+
+      let currentName = null;
+      if (
+        currentIndex != null &&
+        !Number.isNaN(currentIndex) &&
+        headers[currentIndex] != null
+      ) {
+        currentName = headers[currentIndex];
+      }
+
+      while (columnSelect.firstChild) {
+        columnSelect.removeChild(columnSelect.firstChild);
+      }
+
+      // Try to auto-detect shipping postcode column
+      const autoDetectedIdx = findShippingPostcodeColumn(headers);
+
+      headers.forEach((name, idx) => {
+        const option = document.createElement("option");
+        option.value = String(idx);
+        const labelName = name && name.trim() ? name : "Column " + (idx + 1);
+        option.textContent = (idx + 1) + " – " + labelName;
+        
+        // Select based on priority: current selection, auto-detected, or none
+        if (currentName && name === currentName) {
+          option.selected = true;
+        } else if (!currentName && autoDetectedIdx === idx) {
+          option.selected = true;
+        }
+        
+        columnSelect.appendChild(option);
+      });
+
+      if (columnSelect.options.length > 0 && columnSelect.selectedIndex < 0) {
+        columnSelect.selectedIndex = 0;
+      }
+    }
+
+    function renderTable(header, rows) {
+      outputWrapper.innerHTML = "";
+
+      if (!header || header.length === 0) {
+        return;
+      }
+
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+
+      header.forEach(cell => {
+        const th = document.createElement("th");
+        th.textContent = cell;
+        headerRow.appendChild(th);
+      });
+
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+
+      rows.forEach(r => {
+        const tr = document.createElement("tr");
+        for (let i = 0; i < header.length; i++) {
+          const td = document.createElement("td");
+          td.textContent = r[i] != null ? r[i] : "";
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+
+      table.appendChild(tbody);
+      outputWrapper.appendChild(table);
+    }
+
+    function encodeCell(value, delimiter) {
+      const s = value == null ? "" : String(value);
+      const mustQuote =
+        s.includes('"') ||
+        s.includes(delimiter) ||
+        s.includes("\n") ||
+        s.includes("\r");
+      if (!mustQuote) return s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+
+    function buildExportText(header, rows, delimiter) {
+      const allRows = [header, ...rows];
+      return allRows
+        .map(row => row.map(cell => encodeCell(cell, delimiter)).join(delimiter))
+        .join("\n");
+    }
+
+    // Automatically parse data when source data changes
+    dataInput.addEventListener("input", () => {
+      parseStatus.textContent = "";
+      parseStatus.classList.remove("error");
+      filterStatus.textContent = "";
+      filterStatus.classList.remove("error");
+      filterStatus.style.whiteSpace = "normal";
+      filterStatus.style.fontWeight = "normal";
+      outputWrapper.innerHTML = "";
+      copyButton.disabled = true;
+
+      const raw = dataInput.value;
+      const parsed = parseData(raw);
+      if (!parsed) {
+        if (raw.trim() !== "") {
+          parseStatus.textContent = "❌ Could not parse data. Please check the input.";
+          parseStatus.classList.add("error");
+        }
+        // Reset column select to default
+        while (columnSelect.firstChild) {
+          columnSelect.removeChild(columnSelect.firstChild);
+        }
+        const defaultOption = document.createElement("option");
+        defaultOption.value = "";
+        defaultOption.textContent = "(parse data first)";
+        columnSelect.appendChild(defaultOption);
+        return;
+      }
+
+      parseStatus.classList.remove("error");
+      
+      const autoDetectedIdx = findShippingPostcodeColumn(parsed.header);
+      let statusText = "✓ Parsed " + parsed.rows.length + " data rows using " +
+        (parsed.delimiter === "\t" ? "tab" : "comma") +
+        " as the delimiter.";
+      
+      if (autoDetectedIdx !== null) {
+        statusText += " Auto-selected: \"" + parsed.header[autoDetectedIdx] + "\"";
+      }
+      
+      parseStatus.textContent = statusText;
+
+      updateColumnSelect(parsed.header);
+
+      // clear any previous filter result
+      filterState.header = null;
+      filterState.rows = [];
+      filterState.delimiter = parsed.delimiter;
+    });
+
+    // Clear filtered data when exclusion patterns change
+    patternsInput.addEventListener("input", () => {
+      filterStatus.textContent = "";
+      filterStatus.classList.remove("error");
+      filterStatus.style.whiteSpace = "normal";
+      filterStatus.style.fontWeight = "normal";
+      outputWrapper.innerHTML = "";
+      copyButton.disabled = true;
+      
+      // clear any previous filter result
+      filterState.header = null;
+      filterState.rows = [];
+    });
+
+    filterButton.addEventListener("click", () => {
+      filterStatus.textContent = "";
+      filterStatus.classList.remove("error");
+      filterStatus.style.whiteSpace = "normal";
+      filterStatus.style.fontWeight = "normal";
+      outputWrapper.innerHTML = "";
+      copyButton.disabled = true;
+
+      const raw = dataInput.value;
+      const parsed = parseData(raw);
+      if (!parsed) {
+        filterStatus.textContent =
+          "❌ No data available. Please paste your CSV or TSV first.";
+        filterStatus.classList.add("error");
+        return;
+      }
+
+      if (!parsed.header || parsed.header.length === 0) {
+        filterStatus.textContent =
+          "❌ Could not find a header row. Please include a header line in your data.";
+        filterStatus.classList.add("error");
+        return;
+      }
+
+      updateColumnSelect(parsed.header);
+
+      const colValue = columnSelect.value;
+      if (colValue === "") {
+        filterStatus.textContent =
+          "❌ Please choose a column that contains the shipping postcode.";
+        filterStatus.classList.add("error");
+        return;
+      }
+
+      const colIndex = parseInt(colValue, 10);
+      if (Number.isNaN(colIndex) || colIndex < 0 || colIndex >= parsed.header.length) {
+        filterStatus.textContent = "❌ Invalid column selected.";
+        filterStatus.classList.add("error");
+        return;
+      }
+
+      const patternText = patternsInput.value;
+      const { patterns, invalidPatterns } = buildPatterns(patternText);
+
+      // Check for validation errors first
+      if (invalidPatterns.length > 0) {
+        showValidationError(invalidPatterns);
+        return;
+      }
+
+      if (!patterns || patterns.length === 0) {
+        filterStatus.textContent =
+          "❌ No patterns provided. Please enter at least one postcode pattern.";
+        filterStatus.classList.add("error");
+        filterStatus.style.whiteSpace = "normal";
+        filterStatus.style.fontWeight = "normal";
+        return;
+      }
+
+      const matcher = createMatcher(patterns);
+
+      const matchedRows = parsed.rows.filter(row => {
+        const value = row[colIndex] != null ? row[colIndex] : "";
+        return matcher(value);
+      });
+
+      renderTable(parsed.header, matchedRows);
+
+      filterStatus.textContent =
+        "✓ Matched " + matchedRows.length + " out of " + parsed.rows.length + " data rows.";
+      filterStatus.style.whiteSpace = "normal";
+      filterStatus.style.fontWeight = "normal";
+
+      filterState.header = parsed.header;
+      filterState.rows = matchedRows;
+      filterState.delimiter = parsed.delimiter;
+      copyButton.disabled = matchedRows.length === 0;
+    });
+
+    copyButton.addEventListener("click", async () => {
+      if (!filterState.header || filterState.rows.length === 0) {
+        return;
+      }
+      const text = buildExportText(
+        filterState.header,
+        filterState.rows,
+        filterState.delimiter
+      );
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          filterStatus.textContent = "✓ Filtered data copied to clipboard.";
+          filterStatus.classList.remove("error");
+          filterStatus.style.whiteSpace = "normal";
+          filterStatus.style.fontWeight = "normal";
+        } else {
+          // fall back: show in a prompt so you can copy manually
+          window.prompt("Copy filtered data:", text);
+        }
+      } catch (e) {
+        filterStatus.textContent =
+          "❌ Could not copy to clipboard. As a fallback, select and copy from the table.";
+        filterStatus.classList.add("error");
+        filterStatus.style.whiteSpace = "normal";
+        filterStatus.style.fontWeight = "normal";
+      }
+    });
+  </script>
+
+  <footer class="privacy-footer">
+    🔒 Your data stays private. This tool runs entirely in your browser — no data is sent to any server, stored, or cached. No cookies, no tracking, no GDPR concerns. Everything is processed locally on your device.
+  </footer>
+</body>
+</html>
